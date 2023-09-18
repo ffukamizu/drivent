@@ -1,18 +1,44 @@
 import { Address, Enrollment } from '@prisma/client';
 import { request } from '@/utils/request';
-import { notFoundError } from '@/errors';
+import { invalidDataError, notFoundError } from '@/errors';
 import { addressRepository, CreateAddressParams, enrollmentRepository, CreateEnrollmentParams } from '@/repositories';
 import { exclude } from '@/utils/prisma-utils';
 
-// TODO - Receber o CEP por parâmetro nesta função.
-async function getAddressFromCEP() {
-  // FIXME: está com CEP fixo!
-  const result = await request.get(`${process.env.VIA_CEP_API}/37440000/json/`);
+type AddressByCep = {
+  logradouro: string;
+  complemento: string;
+  bairro: string;
+  localidade?: string;
+  cidade?: string;
+  uf: string;
+};
 
-  // TODO: Tratar regras de negócio e lanças eventuais erros
+async function getCEP(cep: string): Promise<AddressByCep> {
+  const validateZip = /(^\d{8}$)|(^\d{5}[-]\d{3}$)/;
 
-  // FIXME: não estamos interessados em todos os campos
+  if (!validateZip.test(cep)) throw invalidDataError('CEP invalid');
+
+  const result = await request.get(`${process.env.VIA_CEP_API}/${cep}/json/`);
+
+  if (result.data.erro) throw invalidDataError('Invalid CEP:' + ` ${cep}`);
+
   return result.data;
+}
+
+async function getAddressFromCEP(cep: string): Promise<AddressByCep> {
+  const result = await getCEP(cep);
+
+  const { logradouro, complemento, bairro, localidade, uf } = result;
+
+  const address = {
+    logradouro,
+    complemento,
+    bairro,
+    cidade: localidade,
+    uf,
+  };
+
+  return address;
 }
 
 async function getOneWithAddressByUserId(userId: number): Promise<GetOneWithAddressByUserIdResult> {
@@ -44,7 +70,7 @@ async function createOrUpdateEnrollmentWithAddress(params: CreateOrUpdateEnrollm
   enrollment.birthday = new Date(enrollment.birthday);
   const address = getAddressForUpsert(params.address);
 
-  // TODO - Verificar se o CEP é válido antes de associar ao enrollment.
+  await getCEP(params.address.cep);
 
   const newEnrollment = await enrollmentRepository.upsert(params.userId, enrollment, exclude(enrollment, 'userId'));
 
